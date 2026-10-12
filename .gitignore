@@ -9,3 +9,6 @@ dist/
 tmp/
 .coverage
 htmlcov/
+.env
+.env.*
+!.env.example

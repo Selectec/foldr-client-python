@@ -29,7 +29,10 @@ dev = ["pytest>=8,<10", "build>=1.2,<2", "ruff>=0.9,<1"]
 packages = ["src/foldr_client"]
 
 [tool.hatch.build.targets.sdist]
-include = ["/src", "/tests", "/examples", "/docs", "/README.md", "/pyproject.toml", "/LICENSE"]
+include = [
+  "/src", "/tests", "/examples", "/docs", "/README.md", "/pyproject.toml", "/LICENSE",
+  "/CONTRIBUTING.md", "/SECURITY.md", "/CODE_OF_CONDUCT.md",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

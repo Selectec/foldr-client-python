@@ -272,6 +272,12 @@ These tests check the implementation; they do not establish compatibility with a
 live Foldr deployment. Async I/O and storage-specific or administration endpoints
 are outside this package's scope.
 
+## Contributing and security
+
+See [contribution guidance](CONTRIBUTING.md) for bug reports, feature requests and
+pull requests. Report suspected vulnerabilities using the
+[private security reporting guidance](SECURITY.md).
+
 ## License
 
 This project is available under the [MIT License](LICENSE).

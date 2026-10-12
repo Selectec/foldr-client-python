@@ -1,0 +1,42 @@
+name: Bug report
+description: Report a reproducible problem with the Python client.
+title: "[Bug]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use synthetic data and example domains. Do not include tokens, client secrets,
+        callback codes, signed URLs, tenant addresses, customer data or production logs.
+        Response headers and error attributes can contain secrets.
+        For suspected vulnerabilities, follow the [private reporting guidance](https://github.com/Selectec/foldr-client-python/security/policy).
+  - type: textarea
+    id: problem
+    attributes:
+      label: What happened?
+      description: Describe the problem and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: |
+        Provide small steps or code using synthetic data. An HTTPX mock transport
+        is ideal; the reproduction should not need live credentials or a customer site.
+    validations:
+      required: true
+  - type: textarea
+    id: versions
+    attributes:
+      label: Versions and environment
+      description: |
+        Include foldr-client, Python and operating-system versions. Add HTTPX and
+        OAuthLib versions if relevant. Include a Foldr version only if known;
+        omit site addresses, account names and customer identifiers.
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Optional sanitized details, such as the affected client method or HTTP status.
