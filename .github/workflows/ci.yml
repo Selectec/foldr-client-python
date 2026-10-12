@@ -1,0 +1,50 @@
+name: Client CI
+
+on: [push, pull_request, workflow_dispatch]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest]
+        python: ['3.10', '3.11', '3.12', '3.13', '3.14']
+        include:
+          - os: windows-latest
+            python: '3.13'
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: python -m pip install -e ".[dev]"
+      - run: python -m pytest
+      - run: python -m ruff check .
+      - run: python -m ruff format --check .
+
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - run: python -m pip install build
+      - run: python -m build
+      - name: Install wheel and run isolated smoke check
+        run: |
+          python -m venv "$RUNNER_TEMP/foldr-install"
+          "$RUNNER_TEMP/foldr-install/bin/python" -m pip install dist/*.whl pytest
+          "$RUNNER_TEMP/foldr-install/bin/python" -m pip check
+          cd "$RUNNER_TEMP"
+          "$RUNNER_TEMP/foldr-install/bin/python" "$GITHUB_WORKSPACE/tests/package_smoke.py"
+          "$RUNNER_TEMP/foldr-install/bin/python" -m pytest "$GITHUB_WORKSPACE/tests"
+      - name: Build wheel from source distribution
+        run: |
+          mkdir "$RUNNER_TEMP/foldr-sdist"
+          tar -xzf dist/*.tar.gz -C "$RUNNER_TEMP/foldr-sdist"
+          python -m build --wheel "$RUNNER_TEMP/foldr-sdist/foldr_client-0.1.0"
