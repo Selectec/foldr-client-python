@@ -69,16 +69,6 @@ def site_url(site: str) -> str:
     return site.rstrip("/")
 
 
-def require_object(response: httpx.Response) -> dict[str, Any]:
-    try:
-        value = response.json()
-    except (ValueError, UnicodeError):
-        raise ProtocolError("Expected a JSON object") from None
-    if not isinstance(value, dict):
-        raise ProtocolError("Expected a JSON object")
-    return value
-
-
 def raise_response(response: httpx.Response, *, oauth: bool = False) -> None:
     body = bytearray()
     truncated = False
@@ -120,7 +110,11 @@ class HTTP:
         *,
         timeout: float | httpx.Timeout = 60.0,
         transport: httpx.BaseTransport | None = None,
+        max_json_bytes: int = 8 * 1024 * 1024,
     ):
+        if type(max_json_bytes) is not int or max_json_bytes <= 0:
+            raise ValueError("max_json_bytes must be a positive integer")
+        self.max_json_bytes = max_json_bytes
         # A private session per instance. Explicit Request objects never inherit
         # cookies, auth, URL credentials or headers from earlier responses.
         self.http = httpx.Client(timeout=timeout, transport=transport, trust_env=False)
@@ -151,6 +145,33 @@ class HTTP:
         except OSError:
             raise TransportError(operation, outcome_uncertain=uncertain) from None
 
+    def _json_value(self, response: httpx.Response, *, uncertain: bool) -> Any:
+        # Reject compression before reading: iter_bytes/read would decompress a
+        # small wire response into potentially unbounded memory. Content-Length
+        # is not trusted; enforce the limit against the bytes actually received.
+        if response.headers.get("content-encoding", "identity").strip().lower() != "identity":
+            raise ProtocolError(
+                "JSON response must honor Accept-Encoding: identity", outcome_uncertain=uncertain
+            )
+        body = bytearray()
+        # Pre-buffered responses can be supplied by custom/test transports. The
+        # transport owns any buffering before this method receives the response.
+        chunks = (
+            (response.content,)
+            if response.is_stream_consumed
+            else response.iter_raw(chunk_size=min(8192, self.max_json_bytes + 1))
+        )
+        for chunk in chunks:
+            if len(chunk) > self.max_json_bytes - len(body):
+                raise ProtocolError(
+                    "JSON response exceeds max_json_bytes", outcome_uncertain=uncertain
+                )
+            body.extend(chunk)
+        try:
+            return json.loads(body)
+        except (ValueError, UnicodeError, RecursionError):
+            raise ProtocolError("Expected a JSON response", outcome_uncertain=uncertain) from None
+
     def read_response(
         self,
         response: httpx.Response,
@@ -167,13 +188,7 @@ class HTTP:
             if head or response.status_code in (204, 304):
                 data = None
             else:
-                response.read()
-                try:
-                    data = response.json()
-                except (ValueError, UnicodeError):
-                    raise ProtocolError(
-                        "Expected a JSON response", outcome_uncertain=uncertain
-                    ) from None
+                data = self._json_value(response, uncertain=uncertain)
                 if not isinstance(data, (dict, list)):
                     raise ProtocolError(
                         "Expected a JSON object or array", outcome_uncertain=uncertain
@@ -197,8 +212,10 @@ class HTTP:
         try:
             if response.status_code != 200:
                 raise_response(response, oauth=oauth)
-            response.read()
-            return require_object(response)
+            data = self._json_value(response, uncertain=uncertain)
+            if not isinstance(data, dict):
+                raise ProtocolError("Expected a JSON object", outcome_uncertain=uncertain)
+            return data
         except httpx.HTTPError:
             raise TransportError(operation, outcome_uncertain=uncertain) from None
         finally:

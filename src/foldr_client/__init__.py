@@ -9,6 +9,7 @@ from .errors import (
     StreamError,
     TransportError,
 )
+from .logging import HTTPLogFilter
 from .models import ApiResponse, ContentStream, Page
 from .oauth import Authorization, FoldrOAuth
 from .site import FoldrSite
@@ -24,6 +25,7 @@ __all__ = [
     "FoldrError",
     "FoldrOAuth",
     "FoldrSite",
+    "HTTPLogFilter",
     "OAuthError",
     "Page",
     "ProtocolError",

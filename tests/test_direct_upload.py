@@ -46,6 +46,26 @@ def test_whole_upload_preserves_storage_contract_and_ignores_nonjson_response():
     assert response.data is None
 
 
+def test_create_only_header_is_preserved_and_repeat_rejection_is_not_retried():
+    seen = []
+
+    def handler(request):
+        seen.append(request)
+        assert request.headers["if-none-match"] == "*"
+        assert request.read() == b"hello"
+        return httpx.Response(201 if len(seen) == 1 else 412)
+
+    with DirectUpload(
+        session(headers={"If-None-Match": "*"}),
+        transport=httpx.MockTransport(handler),
+    ) as upload:
+        assert upload.send(b"hello", content_length=5).status_code == 201
+        with pytest.raises(FoldrError) as error:
+            upload.send(b"hello", content_length=5)
+    assert error.value.status_code == 412
+    assert len(seen) == 2
+
+
 def test_supplied_storage_auth_is_preserved_but_cookies_are_not_retained():
     seen = []
 

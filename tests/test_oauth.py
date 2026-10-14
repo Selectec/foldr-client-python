@@ -107,6 +107,24 @@ def test_code_exchange_uses_exactly_registered_authentication_method(auth_method
     assert len(requests) == 1
 
 
+@pytest.mark.parametrize("port", ["", ":443", ":0443"])
+def test_callback_hostname_case_preserves_original_registered_uri_in_exchange(port):
+    registered = "https://App.Example.COM" + port + "/Callback?session=caller-owned"
+    requests = []
+
+    def handle(request):
+        requests.append(request)
+        assert form(request)["redirect_uri"] == [registered]
+        return httpx.Response(200, json=TOKENS)
+
+    with FoldrOAuth(SITE, client_id="id", transport=httpx.MockTransport(handle)) as oauth:
+        authorization = oauth.authorize(registered, scopes=["foldr.read"])
+        query = urlsplit(callback(authorization)).query
+        actual = "https://APP.example.com" + port + "/Callback?" + query
+        assert oauth.exchange_callback(actual, authorization) == TOKENS
+    assert len(requests) == 1
+
+
 @pytest.mark.parametrize(
     "updates",
     [
@@ -114,11 +132,13 @@ def test_code_exchange_uses_exactly_registered_authentication_method(auth_method
         {"state": ""},
         {"state": ["fixed-state", "fixed-state"]},
         {"iss": "https://other.example.com"},
+        {"iss": "https://FILES.example.com"},
         {"iss": ""},
         {"iss": [SITE, SITE]},
         {"code": ""},
         {"code": ["one", "two"]},
         {"session": "wrong"},
+        {"session": ["caller-owned", "caller-owned"]},
         {"error": ["access_denied", "access_denied"]},
         {"error": "access_denied"},
     ],
@@ -130,7 +150,10 @@ def test_bad_callback_query_rejected_before_http(updates):
     with FoldrOAuth(SITE, client_id="id", transport=httpx.MockTransport(handle)) as oauth:
         authorization = oauth.authorize(CALLBACK, scopes=["foldr.read"])
         with pytest.raises(ProtocolError):
-            oauth.exchange_callback(callback(authorization, **updates), authorization)
+            oauth.exchange_callback(
+                callback(authorization, **updates).replace("app.example.com", "APP.EXAMPLE.COM"),
+                authorization,
+            )
 
 
 @pytest.mark.parametrize("missing", ["state", "iss", "code"])
@@ -155,6 +178,18 @@ def test_missing_callback_parameter_rejected_before_http(missing):
         "https://evil.example.com/callback",
         "https://app.example.com/other",
         "https://app.example.com:444/callback",
+        "https://APP.EXAMPLE.COM:443/callback",
+        "https://APP.EXAMPLE.COM:/callback",
+        "https://APP.EXAMPLE.COM/Callback",
+        "https://APP.EXAMPLE.COM/call%62ack",
+        "https://APP.EXAMPLE.COM/callback/",
+        "https://secret@APP.EXAMPLE.COM/callback",
+        "https://user:secret@APP.EXAMPLE.COM/callback",
+        "https://APP.EXAMPLE.COM:secret/callback",
+        "https://APP.EXAMPLE.COM:65536/callback",
+        "https://[secret/callback",
+        "https://APP.EXAMPLE.COM/call\nback",
+        " https://APP.EXAMPLE.COM/callback",
     ],
 )
 def test_callback_target_checked_before_http(target):
@@ -164,8 +199,22 @@ def test_callback_target_checked_before_http(target):
     with FoldrOAuth(SITE, client_id="id", transport=httpx.MockTransport(handle)) as oauth:
         authorization = oauth.authorize(CALLBACK, scopes=["foldr.read"])
         query = urlsplit(callback(authorization)).query
-        with pytest.raises(ProtocolError):
+        with pytest.raises(ProtocolError) as caught:
             oauth.exchange_callback(target + "?" + query, authorization)
+        assert "secret" not in str(caught.value)
+
+
+def test_callback_port_spelling_remains_exact():
+    def handle(request):
+        pytest.fail("Changed port spelling must not exchange a code")
+
+    with FoldrOAuth(SITE, client_id="id", transport=httpx.MockTransport(handle)) as oauth:
+        authorization = oauth.authorize(
+            "https://app.example.com:0443/callback?session=caller-owned", scopes=["foldr.read"]
+        )
+        query = urlsplit(callback(authorization)).query
+        with pytest.raises(ProtocolError):
+            oauth.exchange_callback("https://APP.EXAMPLE.COM:443/callback?" + query, authorization)
 
 
 def test_callback_fragment_and_foreign_authorization_context_are_rejected():
@@ -271,6 +320,38 @@ class InterruptedBody(httpx.SyncByteStream):
 
     def close(self):
         self.closed = True
+
+
+@pytest.mark.parametrize("max_json_bytes", [None, 128])
+def test_token_response_limit_closes_body_and_preserves_uncertain_outcome(max_json_bytes):
+    calls = []
+    limit = 64 * 1024 if max_json_bytes is None else max_json_bytes
+
+    class OversizedBody(httpx.SyncByteStream):
+        closed = False
+
+        def __iter__(self):
+            yield b'{"access_token":"' + b"x" * limit + b'","token_type":"Bearer"}'
+
+        def close(self):
+            self.closed = True
+
+    body = OversizedBody()
+
+    def handle(request):
+        calls.append(request)
+        return httpx.Response(200, stream=body)
+
+    options = {} if max_json_bytes is None else {"max_json_bytes": max_json_bytes}
+    with FoldrOAuth(
+        SITE, client_id="id", transport=httpx.MockTransport(handle), **options
+    ) as oauth:
+        with pytest.raises(ProtocolError) as caught:
+            oauth.refresh("refresh-secret")
+    assert caught.value.outcome_uncertain is True
+    assert "refresh-secret" not in str(caught.value)
+    assert len(calls) == 1
+    assert body.closed
 
 
 @pytest.mark.parametrize("failure", ["timeout", "connect", "read"])
@@ -409,6 +490,10 @@ def test_oauth_never_follows_redirects(operation):
         "https://user:secret@app.example.com/callback",
         "https://app.example.com/callback#fragment",
         "javascript:alert(1)",
+        "https://app.example.com:secret/callback",
+        "https://app.example.com:65536/callback",
+        "https://[secret/callback",
+        "https://app.example.com/call\nback",
     ],
 )
 def test_authorization_rejects_unsafe_redirect_uri(redirect):

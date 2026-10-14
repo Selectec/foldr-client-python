@@ -14,6 +14,8 @@ Methods use fixed API routes; constructing a client opens no network connection.
 The caller supplies a Foldr HTTPS site and an access token. Each client has its
 own HTTP session and identity. Foldr decides which shares and files that identity
 may access, including shares backed by another storage account.
+Access tokens must be nonempty visible ASCII without whitespace; invalid values
+are rejected before any request.
 
 ## Install
 
@@ -131,8 +133,15 @@ For direct downloads, the client follows at most five redirects, sending **no
 Foldr Authorization or cookies** on any redirect hop, including the same host.
 Only HTTPS destinations without URL credentials are accepted. Omitted `direct`
 honors the share's setting; `direct=False` requests bytes through Foldr.
-Signed storage URLs and Location headers
-are credentials: keep them out of logs. Stream chunks use bounded buffering;
+Choose `direct=False` when downloads need Foldr to check access on each new
+request. It does not revoke storage URLs issued earlier; those can outlive an app
+disconnect or permission change. An optional `destination_policy` callback on
+`FoldrClient` checks every download redirect, and on `DirectUpload` checks each
+storage send. See [client safety configuration](docs/client-safety.md).
+Signed storage URLs and Location headers are credentials: keep them out of logs.
+HTTPX/HTTPCore logs can expose these URLs even when exception messages are safe;
+the opt-in `HTTPLogFilter` suppresses their records on configured output handlers.
+Stream chunks use bounded buffering;
 collecting them into a list or joining them makes memory use the caller's concern.
 Content requests require identity encoding. A server that sends compressed content
 despite that request is rejected before decompression, preserving bounded memory
@@ -250,6 +259,13 @@ cannot force whole-file buffering. Compressed error bodies remain capped wire
 bytes rather than being decompressed. Exception messages omit provider text and
 URLs; error attributes and headers may contain sensitive data, so redact before logging.
 Failures during an error body's transfer may surface as transport errors.
+
+Successful JSON responses are limited to 8 MiB for `FoldrClient`/`FoldrSite` and
+64 KiB for `FoldrOAuth`. Set the positive integer `max_json_bytes` constructor
+option to adjust a limit. Unexpected compression is rejected before decoding;
+oversized responses raise `ProtocolError` and close without retry. Failed
+mutation/token responses retain `outcome_uncertain=True`. File streams are not
+subject to the JSON limit. See [configuration examples](docs/client-safety.md).
 
 There are no implicit retries, sleeps, snapshot restarts or permission checks.
 Foldr's 401/403/404 and storage connection errors reach the caller unchanged.

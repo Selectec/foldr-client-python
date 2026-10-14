@@ -1,13 +1,14 @@
 """Synchronous operations specific to Foldr API v1."""
 
 import json
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from typing import Any
 from urllib.parse import quote, urljoin, urlsplit
 
 import httpx
 
+from ._destinations import check_destination
 from ._http import HTTP, UploadContent, iter_content, raise_response, site_url
 from .errors import ProtocolError, TransportError
 from .models import ApiResponse, ContentStream, Page
@@ -27,13 +28,20 @@ class FoldrClient:
         access_token: str,
         timeout: float | httpx.Timeout = 60.0,
         transport: httpx.BaseTransport | None = None,
+        max_json_bytes: int = 8 * 1024 * 1024,
+        destination_policy: Callable[[httpx.URL], bool] | None = None,
     ):
         self.site = site_url(site)
         self.api_url = self.site + "/api/v1"
-        if not access_token or any(c in access_token for c in "\r\n"):
-            raise ValueError("access_token must be nonempty and contain no newlines")
+        if (
+            not isinstance(access_token, str)
+            or not access_token
+            or any(not 33 <= ord(c) <= 126 for c in access_token)
+        ):
+            raise ValueError("access_token must be nonempty visible ASCII without whitespace")
         self._access_token = access_token
-        self._connection = HTTP(timeout=timeout, transport=transport)
+        self._destination_policy = destination_policy
+        self._connection = HTTP(timeout=timeout, transport=transport, max_json_bytes=max_json_bytes)
 
     def __enter__(self):
         return self
@@ -649,6 +657,7 @@ class FoldrClient:
                         raise ProtocolError(
                             "Content redirect must use HTTPS without URL credentials"
                         )
+                    check_destination(target, self._destination_policy)
                     response.close()
                     # Never restore credentials, even after a same-origin hop or a
                     # redirect back to Foldr. No session cookies are inherited.

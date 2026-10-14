@@ -4,13 +4,33 @@ import secrets
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
-from urllib.parse import parse_qs, quote_plus, urlencode, urlsplit
+from urllib.parse import SplitResult, parse_qs, quote_plus, urlencode, urlsplit
 
 import httpx
 from oauthlib.oauth2 import WebApplicationClient
 
 from ._http import HTTP, raise_response, site_url
 from .errors import OAuthError, ProtocolError, TransportError
+
+
+def _callback_parts(url: str) -> SplitResult:
+    """Parse without silently accepting userinfo or stripped URL controls."""
+    if any(ord(char) <= 32 or ord(char) == 127 for char in url):
+        raise ValueError("Invalid callback URL")
+    parsed = urlsplit(url)
+    if not parsed.hostname or parsed.username is not None or parsed.password is not None:
+        raise ValueError("Invalid callback URL")
+    # Accessing port validates its spelling and range; preserve its original text.
+    _ = parsed.port
+    return parsed
+
+
+def _callback_target(parsed: SplitResult) -> tuple[str, str, str]:
+    authority = parsed.netloc
+    if not authority.startswith("["):
+        host, separator, port = authority.partition(":")
+        authority = host.lower() + separator + port
+    return parsed.scheme, authority, parsed.path
 
 
 @dataclass(frozen=True, repr=False)
@@ -43,6 +63,7 @@ class FoldrOAuth:
         client_secret: str | None = None,
         auth_method: str = "none",
         timeout: float | httpx.Timeout = 60.0,
+        max_json_bytes: int = 64 * 1024,
         transport: httpx.BaseTransport | None = None,
     ):
         self.site = site_url(site)
@@ -57,7 +78,7 @@ class FoldrOAuth:
             raise ValueError("client_secret must match the authentication method")
         self._client_secret = client_secret
         self.auth_method = auth_method
-        self._connection = HTTP(timeout=timeout, transport=transport)
+        self._connection = HTTP(timeout=timeout, transport=transport, max_json_bytes=max_json_bytes)
 
     def __enter__(self):
         return self
@@ -72,7 +93,10 @@ class FoldrOAuth:
         """Generate an S256 PKCE URL and state; caller opens URL and retains context."""
         if isinstance(scopes, str):
             raise ValueError("scopes must be a sequence of scope strings")
-        parsed = urlsplit(redirect_uri)
+        try:
+            parsed = _callback_parts(redirect_uri)
+        except ValueError:
+            raise ValueError("Invalid redirect_uri") from None
         if (
             not parsed.hostname
             or parsed.username is not None
@@ -113,12 +137,12 @@ class FoldrOAuth:
         """
         if authorization.site != self.site or authorization.client_id != self.client_id:
             raise ProtocolError("Authorization context belongs to another site or client")
-        actual, expected = urlsplit(callback_url), urlsplit(authorization.redirect_uri)
-        if actual.fragment or (actual.scheme, actual.netloc, actual.path) != (
-            expected.scheme,
-            expected.netloc,
-            expected.path,
-        ):
+        try:
+            actual = _callback_parts(callback_url)
+            expected = _callback_parts(authorization.redirect_uri)
+        except ValueError:
+            raise ProtocolError("Malformed OAuth callback target") from None
+        if actual.fragment or _callback_target(actual) != _callback_target(expected):
             raise ProtocolError("OAuth callback target does not match redirect_uri")
         query = parse_qs(actual.query, keep_blank_values=True)
         for key, values in parse_qs(expected.query, keep_blank_values=True).items():

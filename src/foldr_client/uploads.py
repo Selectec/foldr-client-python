@@ -1,12 +1,13 @@
 """Send direct-upload bytes using only the storage credentials in a Foldr session."""
 
 import re
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from typing import Any, BinaryIO
 from urllib.parse import urlsplit
 
 import httpx
 
+from ._destinations import check_destination
 from ._http import HTTP, iter_content, raise_response
 from .errors import ProtocolError, TransportError
 from .models import ApiResponse
@@ -19,6 +20,9 @@ class DirectUpload:
     and headers are credentials: retain them privately. This helper never takes
     a Foldr token, follows redirects, retries, or completes the Foldr session.
     Close with a context manager or ``close()``. Caller-owned streams stay open.
+    Optional ``destination_policy`` must return True to approve each send. It
+    receives a credential-bearing URL; keep it out of logs. Private storage is
+    permitted by default. A URL policy does not constrain DNS resolution.
     """
 
     def __init__(
@@ -27,6 +31,7 @@ class DirectUpload:
         *,
         timeout: float | httpx.Timeout = 60.0,
         transport: httpx.BaseTransport | None = None,
+        destination_policy: Callable[[httpx.URL], bool] | None = None,
     ):
         url = session.get("url")
         parsed = urlsplit(url) if isinstance(url, str) else None
@@ -60,6 +65,7 @@ class DirectUpload:
         self._method = method
         self._size = size
         self._chunk_size = chunk_size
+        self._destination_policy = destination_policy
         self._connection = HTTP(timeout=timeout, transport=transport)
 
     def __enter__(self):
@@ -121,6 +127,7 @@ class DirectUpload:
         headers["Content-Length"] = str(content_length)
         if content_range is not None:
             headers["Content-Range"] = content_range
+        check_destination(self._url, self._destination_policy)
         response = self._connection.send(
             self._method,
             self._url,
