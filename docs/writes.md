@@ -35,6 +35,14 @@ locally because these methods require an explicit version. Other validation and
 conflict handling belong to the server. A failed request is raised to the caller;
 the client does not force the change or retry it.
 
+Concurrency protection depends on the storage backend. Foldr can return weak
+size/mtime ETags for SMB, where different contents of the same size within the
+timestamp resolution may share a tag. The client preserves the tag, including
+`W/`, exactly as the API requires; it does not turn it into a strong content
+version or guarantee atomic server-side checks. Do not remove `W/` or substitute
+a locally invented tag. Workflows needing stronger assurance must use server
+and storage controls that provide it.
+
 ## Upload and overwrite
 
 ```python
@@ -204,3 +212,10 @@ retry or resume attempt. The session's explicit storage authorization headers
 are retained. Keep the session URL and headers out of logs and treat them as
 credentials. `cancel_upload_session(id)` provides explicit session cancellation;
 the server determines what cancellation can remove.
+
+Storage conditions such as a session-supplied `If-None-Match: *` are preserved
+unchanged. A storage 412 is raised as `FoldrError`; the helper never removes a
+condition or retries to force an upload. Create-only enforcement belongs to the
+server/storage signature, not to a caller-controlled SDK. Configure
+`destination_policy` and HTTP log filtering as described in
+[client safety configuration](client-safety.md).

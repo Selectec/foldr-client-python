@@ -71,7 +71,8 @@ ETags remain opaque, including weak markers and quotes.
 
 ## Site bootstrap and OAuth
 
-`FoldrSite(site, *, timeout=60.0, transport=None)` owns a credential-free session:
+`FoldrSite(site, *, timeout=60.0, transport=None, max_json_bytes=8388608)` owns a
+credential-free session:
 
 | Method | Endpoint | Result |
 | --- | --- | --- |
@@ -82,7 +83,7 @@ ETags remain opaque, including weak markers and quotes.
 | `register(metadata)` | POST `/oauth/register`, JSON | ApiResponse 201 |
 
 `FoldrOAuth(site, *, client_id, client_secret=None, auth_method="none", timeout=60.0,
-transport=None)` provides these explicit operations:
+max_json_bytes=65536, transport=None)` provides these explicit operations:
 
 | Method | Protocol |
 | --- | --- |
@@ -91,7 +92,8 @@ transport=None)` provides these explicit operations:
 | `refresh(refresh_token, *, scopes=None)` | One POST `/oauth/token`; returns rotated tokens for caller to save |
 | `revoke(token, *, token_type_hint=None)` | POST `/oauth/revoke`; accepts empty 200, returns None |
 
-`DirectUpload(session, *, timeout=60.0, transport=None)` sends bytes to the exact
+`DirectUpload(session, *, timeout=60.0, transport=None, destination_policy=None)`
+sends bytes to the exact
 storage method/URL/headers from createUploadSession. `send(content, *,
 content_length, content_range=None)` returns status/headers with `data=None` and
 does not interpret storage response bodies. Use a separate context from Foldr;
@@ -99,6 +101,25 @@ see [upload examples](writes.md). All four client classes own their optional
 transport and support context management and `close()`.
 
 ## Request behavior and limits
+
+`FoldrClient(site, *, access_token, timeout=60.0, transport=None,
+max_json_bytes=8388608, destination_policy=None)` owns one authenticated session.
+`max_json_bytes` is a positive integer limit on each successful JSON response;
+it is enforced while reading actual bytes, regardless of Content-Length.
+Compressed JSON is refused before decompression. OAuth defaults to 64 KiB;
+API and site/discovery default to 8 MiB. These limits do not cap file streams,
+change the 64 KiB error cap, or read bodies on HEAD/204/304 responses.
+
+`destination_policy` is an optional synchronous `Callable[[httpx.URL], bool]`.
+It must return `True` to approve each download redirect or each direct-upload
+send. Rejection or a callback exception raises a sanitized `ProtocolError`
+before contacting that destination. It does not validate the initial Foldr site
+or resolve DNS. With no callback, existing HTTPS/private storage support remains.
+
+`HTTPLogFilter()` is a standard logging filter, exported by `foldr_client`, that
+suppresses HTTPX/HTTPCore records at all levels. It must be attached explicitly to
+every applicable output handler; importing the client changes no logging setup.
+See [client safety configuration](client-safety.md) for examples and limits.
 
 Download `direct=None` omits the parameter and honors the share's setting;
 `direct=False` requests bytes through Foldr. Upload-session `content_type=None`

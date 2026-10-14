@@ -25,9 +25,10 @@ class FoldrSite:
         *,
         timeout: float | httpx.Timeout = 60.0,
         transport: httpx.BaseTransport | None = None,
+        max_json_bytes: int = 8 * 1024 * 1024,
     ):
         self.site = site_url(site)
-        self._connection = HTTP(timeout=timeout, transport=transport)
+        self._connection = HTTP(timeout=timeout, transport=transport, max_json_bytes=max_json_bytes)
 
     def __enter__(self):
         return self
